@@ -22,9 +22,14 @@ export type Transaction = {
     id: string;
     store_id: string;
     cashier_id: string;
-    total: number;
+    subtotal: number;
     tax: number;
+    discount: number;
+    total: number;
     payment_method: string;
+    payment_amount: number;
+    change_amount: number;
+    status: string;
     items: CartItem[];
     created_at: string;
 };
@@ -49,5 +54,7 @@ export type Store = {
     name: string;
     address: string | null;
     owner_id: string;
+    description?: string | null;
+    display_id?: string | null;
     created_at: string;
 };

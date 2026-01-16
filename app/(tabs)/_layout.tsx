@@ -1,7 +1,8 @@
 import { Tabs, useRouter, useSegments } from "expo-router";
 import { Home, ShoppingCart, Clock, Settings, LogOut, Menu, X, Package } from "lucide-react-native";
-import { Platform, StyleSheet, View, Text, TouchableOpacity, useWindowDimensions, Modal } from "react-native";
+import { Platform, StyleSheet, View, Text, TouchableOpacity, useWindowDimensions, Modal, Alert } from "react-native";
 import { useState } from "react";
+import { signOut } from "../../lib/api";
 
 const COLORS = {
     primary: "#16a34a",
@@ -113,9 +114,14 @@ export default function TabLayout() {
                             <View style={styles.sidebarFooter}>
                                 <TouchableOpacity
                                     style={styles.logoutBtn}
-                                    onPress={() => {
+                                    onPress={async () => {
                                         setMenuOpen(false);
-                                        router.replace("/login");
+                                        try {
+                                            await signOut();
+                                            router.replace("/login");
+                                        } catch (err) {
+                                            Alert.alert("Error", "Gagal keluar");
+                                        }
                                     }}
                                 >
                                     <LogOut size={20} color={COLORS.red} />

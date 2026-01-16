@@ -1,6 +1,18 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, useWindowDimensions } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, useWindowDimensions, ActivityIndicator, RefreshControl } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { TrendingUp, Package, ArrowUpRight, Bell, DollarSign, Users } from "lucide-react-native";
+import { TrendingUp, Package, ArrowUpRight, ArrowDownRight, Bell, DollarSign, Users } from "lucide-react-native";
+import { useState, useCallback } from "react";
+import { useFocusEffect } from "expo-router";
+import {
+    getDashboardStats,
+    getRecentTransactions,
+    getStoreId,
+    getCurrentEmployee,
+    formatCurrency,
+    formatTime,
+    DashboardStats
+} from "../../lib/api";
+import { Transaction } from "../../lib/supabase";
 
 const COLORS = {
     primary: "#16a34a",
@@ -17,19 +29,80 @@ const COLORS = {
     orangeLight: "#ffedd5",
     purple: "#8b5cf6",
     purpleLight: "#ede9fe",
+    red: "#ef4444",
 };
-
-const transactions = [
-    { id: "1001", time: "10:45", method: "Tunai", amount: 125000 },
-    { id: "1002", time: "10:32", method: "QRIS", amount: 87500 },
-    { id: "1003", time: "10:15", method: "Tunai", amount: 45000 },
-    { id: "1004", time: "09:58", method: "Kartu", amount: 235000 },
-    { id: "1005", time: "09:41", method: "Tunai", amount: 67500 },
-];
 
 export default function Dashboard() {
     const { width } = useWindowDimensions();
     const isTablet = width >= 768;
+
+    const [isLoading, setIsLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [userName, setUserName] = useState("Kasir");
+    const [stats, setStats] = useState<DashboardStats>({
+        todaySales: 0,
+        salesChange: 0,
+        todayTransactions: 0,
+        todayItemsSold: 0,
+        totalCustomers: 0,
+    });
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+    const loadData = async () => {
+        try {
+            const storeId = getStoreId();
+            if (!storeId) return;
+
+            // Load user name from employee
+            const employee = getCurrentEmployee();
+            if (employee) {
+                setUserName(employee.name || 'Kasir');
+            }
+
+            // Load stats
+            const dashStats = await getDashboardStats(storeId);
+            setStats(dashStats);
+
+            // Load recent transactions
+            const recentTx = await getRecentTransactions(storeId, 5);
+            setTransactions(recentTx);
+        } catch (err) {
+            console.error("Load dashboard error:", err);
+        } finally {
+            setIsLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            loadData();
+        }, [])
+    );
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        loadData();
+    };
+
+    const getGreeting = () => {
+        const hour = new Date().getHours();
+        if (hour < 12) return "Selamat Pagi";
+        if (hour < 15) return "Selamat Siang";
+        if (hour < 18) return "Selamat Sore";
+        return "Selamat Malam";
+    };
+
+    if (isLoading) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                    <Text style={styles.loadingText}>Memuat data...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.container}>
@@ -38,22 +111,34 @@ export default function Dashboard() {
             {/* Header */}
             <View style={styles.header}>
                 <View>
-                    <Text style={styles.greeting}>Selamat Pagi,</Text>
-                    <Text style={styles.userName}>Kasir Utama</Text>
+                    <Text style={styles.greeting}>{getGreeting()},</Text>
+                    <Text style={styles.userName}>{userName}</Text>
                 </View>
                 <TouchableOpacity style={styles.notifButton}>
                     <Bell size={22} color={COLORS.text} />
                 </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                style={styles.scrollView}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
+                }
+            >
                 {/* Sales Summary Card */}
                 <View style={styles.summaryCard}>
                     <Text style={styles.summaryLabel}>Total Penjualan Hari Ini</Text>
-                    <Text style={styles.summaryAmount}>Rp 4.525.000</Text>
-                    <View style={styles.summaryBadge}>
-                        <ArrowUpRight size={16} color={COLORS.white} />
-                        <Text style={styles.summaryBadgeText}>+12.5% dari kemarin</Text>
+                    <Text style={styles.summaryAmount}>{formatCurrency(stats.todaySales)}</Text>
+                    <View style={[styles.summaryBadge, stats.salesChange < 0 && styles.summaryBadgeNegative]}>
+                        {stats.salesChange >= 0 ? (
+                            <ArrowUpRight size={16} color={COLORS.white} />
+                        ) : (
+                            <ArrowDownRight size={16} color={COLORS.white} />
+                        )}
+                        <Text style={styles.summaryBadgeText}>
+                            {stats.salesChange >= 0 ? '+' : ''}{stats.salesChange}% dari kemarin
+                        </Text>
                     </View>
                 </View>
 
@@ -64,7 +149,7 @@ export default function Dashboard() {
                             <TrendingUp size={20} color={COLORS.white} />
                         </View>
                         <Text style={styles.statLabel}>Transaksi</Text>
-                        <Text style={styles.statValue}>128</Text>
+                        <Text style={styles.statValue}>{stats.todayTransactions}</Text>
                     </View>
 
                     <View style={[styles.statCard, { backgroundColor: COLORS.orangeLight }]}>
@@ -72,7 +157,7 @@ export default function Dashboard() {
                             <Package size={20} color={COLORS.white} />
                         </View>
                         <Text style={styles.statLabel}>Produk Terjual</Text>
-                        <Text style={styles.statValue}>847</Text>
+                        <Text style={styles.statValue}>{stats.todayItemsSold}</Text>
                     </View>
 
                     <View style={[styles.statCard, { backgroundColor: COLORS.primaryLight }]}>
@@ -80,7 +165,9 @@ export default function Dashboard() {
                             <DollarSign size={20} color={COLORS.white} />
                         </View>
                         <Text style={styles.statLabel}>Rata-rata</Text>
-                        <Text style={styles.statValue}>Rp 35.350</Text>
+                        <Text style={styles.statValue}>
+                            {formatCurrency(stats.todayTransactions > 0 ? Math.round(stats.todaySales / stats.todayTransactions) : 0)}
+                        </Text>
                     </View>
 
                     <View style={[styles.statCard, { backgroundColor: COLORS.purpleLight }]}>
@@ -88,7 +175,7 @@ export default function Dashboard() {
                             <Users size={20} color={COLORS.white} />
                         </View>
                         <Text style={styles.statLabel}>Pelanggan</Text>
-                        <Text style={styles.statValue}>89</Text>
+                        <Text style={styles.statValue}>{stats.totalCustomers}</Text>
                     </View>
                 </View>
 
@@ -96,33 +183,38 @@ export default function Dashboard() {
                 <View style={styles.section}>
                     <View style={styles.sectionHeader}>
                         <Text style={styles.sectionTitle}>Transaksi Terakhir</Text>
-                        <TouchableOpacity>
-                            <Text style={styles.seeAllText}>Lihat Semua</Text>
-                        </TouchableOpacity>
                     </View>
 
-                    <View style={styles.transactionList}>
-                        {transactions.map((tx, index) => (
-                            <View
-                                key={tx.id}
-                                style={[
-                                    styles.transactionItem,
-                                    index !== transactions.length - 1 && styles.transactionBorder
-                                ]}
-                            >
-                                <View style={styles.txLeft}>
-                                    <View style={styles.txAvatar}>
-                                        <Text style={styles.txAvatarText}>#{tx.id}</Text>
+                    {transactions.length === 0 ? (
+                        <View style={styles.emptyState}>
+                            <Text style={styles.emptyText}>Belum ada transaksi hari ini</Text>
+                        </View>
+                    ) : (
+                        <View style={styles.transactionList}>
+                            {transactions.map((tx, index) => (
+                                <View
+                                    key={tx.id}
+                                    style={[
+                                        styles.transactionItem,
+                                        index !== transactions.length - 1 && styles.transactionBorder
+                                    ]}
+                                >
+                                    <View style={styles.txLeft}>
+                                        <View style={styles.txAvatar}>
+                                            <Text style={styles.txAvatarText}>#{tx.id.substring(0, 4)}</Text>
+                                        </View>
+                                        <View>
+                                            <Text style={styles.txTitle}>Pembayaran #{tx.id.substring(0, 8)}</Text>
+                                            <Text style={styles.txSubtitle}>
+                                                {formatTime(tx.created_at)} • {tx.payment_method || 'Tunai'}
+                                            </Text>
+                                        </View>
                                     </View>
-                                    <View>
-                                        <Text style={styles.txTitle}>Pembayaran #{tx.id}</Text>
-                                        <Text style={styles.txSubtitle}>{tx.time} • {tx.method}</Text>
-                                    </View>
+                                    <Text style={styles.txAmount}>+{formatCurrency(tx.total)}</Text>
                                 </View>
-                                <Text style={styles.txAmount}>+Rp {tx.amount.toLocaleString("id-ID")}</Text>
-                            </View>
-                        ))}
-                    </View>
+                            ))}
+                        </View>
+                    )}
                 </View>
             </ScrollView>
         </SafeAreaView>
@@ -133,6 +225,16 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: COLORS.background,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    loadingText: {
+        marginTop: 12,
+        color: COLORS.textSecondary,
+        fontSize: 14,
     },
     header: {
         flexDirection: "row",
@@ -197,6 +299,9 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: 20,
     },
+    summaryBadgeNegative: {
+        backgroundColor: "rgba(239,68,68,0.3)",
+    },
     summaryBadgeText: {
         color: COLORS.white,
         fontSize: 14,
@@ -251,10 +356,15 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
         color: COLORS.text,
     },
-    seeAllText: {
+    emptyState: {
+        backgroundColor: COLORS.surface,
+        borderRadius: 16,
+        padding: 32,
+        alignItems: "center",
+    },
+    emptyText: {
+        color: COLORS.textSecondary,
         fontSize: 14,
-        color: COLORS.primary,
-        fontWeight: "600",
     },
     transactionList: {
         backgroundColor: COLORS.surface,
@@ -274,6 +384,7 @@ const styles = StyleSheet.create({
     txLeft: {
         flexDirection: "row",
         alignItems: "center",
+        flex: 1,
     },
     txAvatar: {
         width: 44,

@@ -1,6 +1,10 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, RefreshControl } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { Clock, ChevronRight } from "lucide-react-native";
+import { Calendar, Clock, CreditCard, Banknote, QrCode } from "lucide-react-native";
+import { useState, useCallback } from "react";
+import { useFocusEffect } from "expo-router";
+import { getTransactions, getStoreId, formatCurrency, formatDate, formatTime } from "../../lib/api";
+import { Transaction } from "../../lib/supabase";
 
 const COLORS = {
     primary: "#16a34a",
@@ -11,80 +15,181 @@ const COLORS = {
     text: "#111827",
     textSecondary: "#6b7280",
     white: "#ffffff",
+    blue: "#3b82f6",
+    orange: "#f97316",
 };
 
-const transactions = [
-    { id: "TRX-1001", date: "16 Jan 2026", time: "10:45", items: 5, total: 125000, status: "Selesai" },
-    { id: "TRX-1002", date: "16 Jan 2026", time: "10:32", items: 3, total: 87500, status: "Selesai" },
-    { id: "TRX-1003", date: "16 Jan 2026", time: "10:15", items: 2, total: 45000, status: "Selesai" },
-    { id: "TRX-1004", date: "15 Jan 2026", time: "17:58", items: 8, total: 235000, status: "Selesai" },
-    { id: "TRX-1005", date: "15 Jan 2026", time: "16:41", items: 4, total: 67500, status: "Selesai" },
-    { id: "TRX-1006", date: "15 Jan 2026", time: "14:22", items: 6, total: 156000, status: "Selesai" },
-];
-
 export default function History() {
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+
+    const loadData = async () => {
+        try {
+            const storeId = getStoreId();
+            if (!storeId) return;
+
+            const data = await getTransactions(storeId, 50);
+            setTransactions(data);
+        } catch (err) {
+            console.error("Load history error:", err);
+        } finally {
+            setIsLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            loadData();
+        }, [])
+    );
+
+    const onRefresh = () => {
+        setRefreshing(true);
+        loadData();
+    };
+
+    const getPaymentIcon = (method: string) => {
+        switch (method?.toLowerCase()) {
+            case "qris":
+                return <QrCode size={16} color={COLORS.blue} />;
+            case "card":
+            case "kartu":
+                return <CreditCard size={16} color={COLORS.orange} />;
+            default:
+                return <Banknote size={16} color={COLORS.primary} />;
+        }
+    };
+
+    const getPaymentLabel = (method: string) => {
+        switch (method?.toLowerCase()) {
+            case "qris":
+                return "QRIS";
+            case "card":
+            case "kartu":
+                return "Kartu";
+            default:
+                return "Tunai";
+        }
+    };
+
+    // Group transactions by date
+    const groupedTransactions = transactions.reduce((groups, tx) => {
+        const date = new Date(tx.created_at).toDateString();
+        if (!groups[date]) {
+            groups[date] = [];
+        }
+        groups[date].push(tx);
+        return groups;
+    }, {} as Record<string, Transaction[]>);
+
+    if (isLoading) {
+        return (
+            <SafeAreaView style={styles.container}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                    <Text style={styles.loadingText}>Memuat riwayat...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar style="dark" />
 
             {/* Header */}
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Riwayat Transaksi</Text>
+                <Text style={styles.title}>Riwayat Transaksi</Text>
+                <Text style={styles.subtitle}>{transactions.length} transaksi</Text>
             </View>
 
-            <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-                {/* Today */}
-                <Text style={styles.dateLabel}>Hari Ini</Text>
-                <View style={styles.transactionList}>
-                    {transactions.slice(0, 3).map((tx, index) => (
-                        <TouchableOpacity
-                            key={tx.id}
-                            style={[styles.transactionItem, index !== 2 && styles.transactionBorder]}
-                            activeOpacity={0.7}
-                        >
-                            <View style={styles.txLeft}>
-                                <View style={styles.txIcon}>
-                                    <Clock size={20} color={COLORS.primary} />
-                                </View>
-                                <View>
-                                    <Text style={styles.txId}>{tx.id}</Text>
-                                    <Text style={styles.txMeta}>{tx.time} • {tx.items} item</Text>
-                                </View>
-                            </View>
-                            <View style={styles.txRight}>
-                                <Text style={styles.txAmount}>Rp {tx.total.toLocaleString("id-ID")}</Text>
-                                <ChevronRight size={20} color={COLORS.textSecondary} />
-                            </View>
-                        </TouchableOpacity>
-                    ))}
+            {transactions.length === 0 ? (
+                <View style={styles.emptyState}>
+                    <Text style={styles.emptyText}>Belum ada transaksi</Text>
                 </View>
+            ) : (
+                <ScrollView
+                    style={styles.scrollView}
+                    refreshControl={
+                        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
+                    }
+                >
+                    {Object.entries(groupedTransactions).map(([date, txs]) => (
+                        <View key={date} style={styles.dateGroup}>
+                            <View style={styles.dateHeader}>
+                                <Calendar size={14} color={COLORS.textSecondary} />
+                                <Text style={styles.dateText}>{formatDate(txs[0].created_at)}</Text>
+                            </View>
 
-                {/* Yesterday */}
-                <Text style={styles.dateLabel}>Kemarin</Text>
-                <View style={styles.transactionList}>
-                    {transactions.slice(3).map((tx, index) => (
-                        <TouchableOpacity
-                            key={tx.id}
-                            style={[styles.transactionItem, index !== 2 && styles.transactionBorder]}
-                            activeOpacity={0.7}
-                        >
-                            <View style={styles.txLeft}>
-                                <View style={styles.txIcon}>
-                                    <Clock size={20} color={COLORS.primary} />
-                                </View>
-                                <View>
-                                    <Text style={styles.txId}>{tx.id}</Text>
-                                    <Text style={styles.txMeta}>{tx.time} • {tx.items} item</Text>
-                                </View>
-                            </View>
-                            <View style={styles.txRight}>
-                                <Text style={styles.txAmount}>Rp {tx.total.toLocaleString("id-ID")}</Text>
-                                <ChevronRight size={20} color={COLORS.textSecondary} />
-                            </View>
-                        </TouchableOpacity>
+                            {txs.map((tx) => {
+                                const items = tx.items || [];
+                                const itemCount = items.reduce((sum: number, item: any) =>
+                                    sum + (item.quantity || item.qty || 0), 0
+                                );
+
+                                return (
+                                    <TouchableOpacity
+                                        key={tx.id}
+                                        style={styles.transactionCard}
+                                        onPress={() => setSelectedTx(selectedTx?.id === tx.id ? null : tx)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <View style={styles.txMain}>
+                                            <View style={styles.txLeft}>
+                                                <View style={styles.txIcon}>
+                                                    {getPaymentIcon(tx.payment_method)}
+                                                </View>
+                                                <View>
+                                                    <Text style={styles.txId}>#{tx.id.substring(0, 8)}</Text>
+                                                    <View style={styles.txMeta}>
+                                                        <Clock size={12} color={COLORS.textSecondary} />
+                                                        <Text style={styles.txTime}>{formatTime(tx.created_at)}</Text>
+                                                        <Text style={styles.txDot}>•</Text>
+                                                        <Text style={styles.txMethod}>{getPaymentLabel(tx.payment_method)}</Text>
+                                                        <Text style={styles.txDot}>•</Text>
+                                                        <Text style={styles.txItems}>{itemCount} item</Text>
+                                                    </View>
+                                                </View>
+                                            </View>
+                                            <Text style={styles.txAmount}>{formatCurrency(tx.total)}</Text>
+                                        </View>
+
+                                        {/* Expanded details */}
+                                        {selectedTx?.id === tx.id && (
+                                            <View style={styles.txDetails}>
+                                                <View style={styles.txDivider} />
+                                                {items.map((item: any, idx: number) => (
+                                                    <View key={idx} style={styles.txItem}>
+                                                        <Text style={styles.txItemName}>
+                                                            {item.name} x{item.quantity || item.qty}
+                                                        </Text>
+                                                        <Text style={styles.txItemPrice}>
+                                                            {formatCurrency((item.price || 0) * (item.quantity || item.qty || 1))}
+                                                        </Text>
+                                                    </View>
+                                                ))}
+                                                <View style={styles.txSummary}>
+                                                    <View style={styles.txSummaryRow}>
+                                                        <Text style={styles.txSummaryLabel}>Subtotal</Text>
+                                                        <Text style={styles.txSummaryValue}>{formatCurrency(tx.subtotal || 0)}</Text>
+                                                    </View>
+                                                    <View style={styles.txSummaryRow}>
+                                                        <Text style={styles.txSummaryLabel}>Pajak</Text>
+                                                        <Text style={styles.txSummaryValue}>{formatCurrency(tx.tax || 0)}</Text>
+                                                    </View>
+                                                </View>
+                                            </View>
+                                        )}
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
                     ))}
-                </View>
-            </ScrollView>
+                </ScrollView>
+            )}
         </SafeAreaView>
     );
 }
@@ -94,6 +199,15 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: COLORS.background,
     },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    loadingText: {
+        marginTop: 12,
+        color: COLORS.textSecondary,
+    },
     header: {
         paddingHorizontal: 20,
         paddingVertical: 16,
@@ -101,49 +215,65 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: COLORS.border,
     },
-    headerTitle: {
+    title: {
         fontSize: 24,
         fontWeight: "bold",
         color: COLORS.text,
     },
+    subtitle: {
+        fontSize: 14,
+        color: COLORS.textSecondary,
+        marginTop: 2,
+    },
+    emptyState: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    emptyText: {
+        color: COLORS.textSecondary,
+        fontSize: 16,
+    },
     scrollView: {
         flex: 1,
         paddingHorizontal: 20,
-        paddingTop: 20,
+        paddingTop: 16,
     },
-    dateLabel: {
-        fontSize: 14,
+    dateGroup: {
+        marginBottom: 20,
+    },
+    dateHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: 12,
+        gap: 6,
+    },
+    dateText: {
+        fontSize: 13,
         fontWeight: "600",
         color: COLORS.textSecondary,
-        marginBottom: 12,
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
     },
-    transactionList: {
+    transactionCard: {
         backgroundColor: COLORS.surface,
-        borderRadius: 16,
-        marginBottom: 24,
-        overflow: "hidden",
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 10,
     },
-    transactionItem: {
+    txMain: {
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
-        padding: 16,
-    },
-    transactionBorder: {
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border,
     },
     txLeft: {
         flexDirection: "row",
         alignItems: "center",
+        flex: 1,
     },
     txIcon: {
-        width: 44,
-        height: 44,
-        backgroundColor: COLORS.primaryLight,
-        borderRadius: 12,
+        width: 40,
+        height: 40,
+        borderRadius: 10,
+        backgroundColor: COLORS.background,
         alignItems: "center",
         justifyContent: "center",
         marginRight: 12,
@@ -154,18 +284,69 @@ const styles = StyleSheet.create({
         color: COLORS.text,
     },
     txMeta: {
-        fontSize: 13,
-        color: COLORS.textSecondary,
-        marginTop: 2,
-    },
-    txRight: {
         flexDirection: "row",
         alignItems: "center",
+        marginTop: 4,
+        gap: 4,
+    },
+    txTime: {
+        fontSize: 12,
+        color: COLORS.textSecondary,
+    },
+    txDot: {
+        color: COLORS.textSecondary,
+    },
+    txMethod: {
+        fontSize: 12,
+        color: COLORS.textSecondary,
+    },
+    txItems: {
+        fontSize: 12,
+        color: COLORS.textSecondary,
     },
     txAmount: {
-        fontSize: 15,
+        fontSize: 16,
         fontWeight: "bold",
+        color: COLORS.primary,
+    },
+    txDetails: {
+        marginTop: 12,
+    },
+    txDivider: {
+        height: 1,
+        backgroundColor: COLORS.border,
+        marginBottom: 12,
+    },
+    txItem: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 8,
+    },
+    txItemName: {
+        fontSize: 13,
         color: COLORS.text,
-        marginRight: 8,
+    },
+    txItemPrice: {
+        fontSize: 13,
+        color: COLORS.textSecondary,
+    },
+    txSummary: {
+        marginTop: 8,
+        paddingTop: 8,
+        borderTopWidth: 1,
+        borderTopColor: COLORS.border,
+    },
+    txSummaryRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 4,
+    },
+    txSummaryLabel: {
+        fontSize: 12,
+        color: COLORS.textSecondary,
+    },
+    txSummaryValue: {
+        fontSize: 12,
+        color: COLORS.text,
     },
 });

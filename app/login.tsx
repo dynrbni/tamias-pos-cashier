@@ -1,7 +1,8 @@
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
+import { supabase } from "../lib/supabase";
 
 const COLORS = {
     primary: "#16a34a",
@@ -13,15 +14,70 @@ const COLORS = {
     text: "#111827",
     textSecondary: "#6b7280",
     white: "#ffffff",
+    red: "#ef4444",
 };
 
 export default function Login() {
     const router = useRouter();
-    const [email, setEmail] = useState("");
+    const [employeeId, setEmployeeId] = useState("");
     const [password, setPassword] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState("");
 
-    const handleLogin = () => {
-        router.replace("/(tabs)");
+    const handleLogin = async () => {
+        if (!employeeId.trim()) {
+            setError("ID Karyawan wajib diisi");
+            return;
+        }
+        if (!password) {
+            setError("Password wajib diisi");
+            return;
+        }
+
+        setError("");
+        setIsLoading(true);
+
+        try {
+            // Find employee by employee_id
+            const { data: employee, error: empError } = await supabase
+                .from('employees')
+                .select('*')
+                .eq('employee_id', employeeId.trim())
+                .single();
+
+            if (empError || !employee) {
+                setError("ID Karyawan tidak ditemukan");
+                setIsLoading(false);
+                return;
+            }
+
+            // Check if employee is active
+            if (!employee.is_active) {
+                setError("Akun Anda tidak aktif. Hubungi owner.");
+                setIsLoading(false);
+                return;
+            }
+
+            // Verify password (stored in 'pin' field)
+            if (employee.pin !== password) {
+                setError("Password salah");
+                setIsLoading(false);
+                return;
+            }
+
+            // Store employee data in AsyncStorage or context for later use
+            // For now, we'll use a simple approach - store in global
+            (global as any).currentEmployee = employee;
+            (global as any).currentStoreId = employee.store_id;
+
+            // Navigate to main app
+            router.replace("/(tabs)");
+        } catch (err: any) {
+            console.error("Login error:", err);
+            setError(err.message || "Login gagal. Coba lagi.");
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (
@@ -39,21 +95,27 @@ export default function Login() {
                     <Text style={styles.brandName}>
                         Tamias<Text style={styles.brandAccent}>POS</Text>
                     </Text>
-                    <Text style={styles.tagline}>Sistem Kasir Modern</Text>
+                    <Text style={styles.tagline}>Aplikasi Kasir</Text>
                 </View>
 
                 {/* Form */}
                 <View style={styles.form}>
                     <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Email</Text>
+                        <Text style={styles.label}>ID Karyawan</Text>
                         <TextInput
                             style={styles.input}
-                            placeholder="nama@email.com"
+                            placeholder="Masukkan 10 digit ID"
                             placeholderTextColor={COLORS.textSecondary}
-                            value={email}
-                            onChangeText={setEmail}
-                            keyboardType="email-address"
-                            autoCapitalize="none"
+                            value={employeeId}
+                            onChangeText={(text) => {
+                                // Only allow numbers
+                                const numericText = text.replace(/[^0-9]/g, '');
+                                setEmployeeId(numericText);
+                                setError("");
+                            }}
+                            keyboardType="number-pad"
+                            maxLength={10}
+                            editable={!isLoading}
                         />
                     </View>
 
@@ -64,25 +126,39 @@ export default function Login() {
                             placeholder="••••••••"
                             placeholderTextColor={COLORS.textSecondary}
                             value={password}
-                            onChangeText={setPassword}
+                            onChangeText={(text) => {
+                                setPassword(text);
+                                setError("");
+                            }}
                             secureTextEntry
+                            editable={!isLoading}
                         />
                     </View>
 
-                    <TouchableOpacity style={styles.loginButton} onPress={handleLogin} activeOpacity={0.8}>
-                        <Text style={styles.loginButtonText}>Masuk</Text>
-                    </TouchableOpacity>
+                    {error ? (
+                        <View style={styles.errorBox}>
+                            <Text style={styles.errorText}>{error}</Text>
+                        </View>
+                    ) : null}
 
-                    <TouchableOpacity style={styles.forgotButton}>
-                        <Text style={styles.forgotText}>Lupa password?</Text>
+                    <TouchableOpacity
+                        style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
+                        onPress={handleLogin}
+                        activeOpacity={0.8}
+                        disabled={isLoading}
+                    >
+                        {isLoading ? (
+                            <ActivityIndicator color={COLORS.white} />
+                        ) : (
+                            <Text style={styles.loginButtonText}>Masuk</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
 
                 <View style={styles.footer}>
-                    <Text style={styles.footerText}>Belum punya akun? </Text>
-                    <TouchableOpacity>
-                        <Text style={styles.footerLink}>Daftar di Web</Text>
-                    </TouchableOpacity>
+                    <Text style={styles.footerText}>
+                        Minta ID & password ke owner/admin toko Anda
+                    </Text>
                 </View>
             </KeyboardAvoidingView>
         </SafeAreaView>
@@ -157,6 +233,19 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: COLORS.text,
     },
+    errorBox: {
+        backgroundColor: "#fef2f2",
+        borderWidth: 1,
+        borderColor: "#fecaca",
+        borderRadius: 8,
+        padding: 12,
+        marginBottom: 8,
+    },
+    errorText: {
+        color: COLORS.red,
+        fontSize: 14,
+        textAlign: "center",
+    },
     loginButton: {
         backgroundColor: COLORS.primary,
         borderRadius: 12,
@@ -169,31 +258,21 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         elevation: 4,
     },
+    loginButtonDisabled: {
+        opacity: 0.7,
+    },
     loginButtonText: {
         color: COLORS.white,
         fontSize: 18,
         fontWeight: "bold",
     },
-    forgotButton: {
-        alignItems: "center",
-        marginTop: 16,
-    },
-    forgotText: {
-        color: COLORS.textSecondary,
-        fontSize: 14,
-    },
     footer: {
-        flexDirection: "row",
-        justifyContent: "center",
+        alignItems: "center",
         marginTop: 32,
     },
     footerText: {
         color: COLORS.textSecondary,
         fontSize: 14,
-    },
-    footerLink: {
-        color: COLORS.primary,
-        fontSize: 14,
-        fontWeight: "bold",
+        textAlign: "center",
     },
 });
